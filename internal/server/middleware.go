@@ -25,7 +25,6 @@ func (m *Middleware) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 
 		endpointRoles := m.Roles[request.URL.Path]
-
 		if len(endpointRoles) > 0 {
 			userRoles, err := getUserRoleByRequest(request)
 			if err != nil && !anyRoleMatch(endpointRoles, userRoles) {
@@ -42,7 +41,6 @@ func parseFloat64ToTime(expireTime float64) time.Time {
 	return time.Unix(int64(sec), int64(dec*(1e9)))
 }
 
-
 func getUserRoleByRequest(request *http.Request) ([]interface{}, error) {
 
 	userToken := getTokenFromRequest(request)
@@ -57,8 +55,6 @@ func getUserRoleByRequest(request *http.Request) ([]interface{}, error) {
 	}
 	return userRoles, nil
 }
-
-
 
 func getTokenFromRequest(request *http.Request) string {
 	authorization := request.Header.Get("Authorization")

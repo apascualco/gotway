@@ -1,0 +1,9 @@
+host: localhost
+port: 8080
+routes:
+  - path: "/one"
+    uri: localhost 
+    headers:
+      token: token-default
+  - path: "/two"
+    uri: 127.0.0.1

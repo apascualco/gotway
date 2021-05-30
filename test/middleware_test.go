@@ -1,9 +1,9 @@
 package test
 
 import (
-	"apascualco.com/gotway/internal/server"
-	"fmt"
 	"testing"
+
+	"apascualco.com/gotway/internal/server"
 )
 
 func TestRolesConfiguration(t *testing.T) {
@@ -29,6 +29,4 @@ func TestRolesConfiguration(t *testing.T) {
 	if middleware.Roles[path][1] != roles[1] {
 		t.Errorf("expected: %v, got: %v", roles[0], middleware.Roles[path][0])
 	}
-	fmt.Println(middleware.Roles)
 }
-
