@@ -1,4 +1,4 @@
-# ⚙️  Gotway
+# ⚙️  Gotway ![](https://travis-ci.com/apascualco/gotway.svg?branch=master)
 
 Gateway in go
 
