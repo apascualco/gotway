@@ -2,6 +2,10 @@ package integration
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"log"
 	"net"
@@ -12,6 +16,7 @@ import (
 
 	"github.com/apascualco/gotway/internal/infrastructure/config"
 	gatewayhttp "github.com/apascualco/gotway/internal/infrastructure/http"
+	jwtlib "github.com/golang-jwt/jwt/v5"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -19,9 +24,8 @@ import (
 var (
 	testServer     *gatewayhttp.Server
 	testServerURL  string
-	testConfig     *config.Config
 	redisContainer testcontainers.Container
-	serviceToken   = "test-service-token"
+	testPrivateKey *rsa.PrivateKey
 )
 
 func TestMain(m *testing.M) {
@@ -67,7 +71,9 @@ func setupRedisContainer(ctx context.Context) error {
 		return fmt.Errorf("failed to get redis port: %w", err)
 	}
 
-	os.Setenv("REDIS_URL", fmt.Sprintf("redis://%s:%s/0", host, port.Port()))
+	if err := os.Setenv("REDIS_URL", fmt.Sprintf("redis://%s:%s/0", host, port.Port())); err != nil {
+		return fmt.Errorf("failed to set REDIS_URL: %w", err)
+	}
 	return nil
 }
 
@@ -77,21 +83,59 @@ func setupGateway() error {
 		return fmt.Errorf("failed to get free port: %w", err)
 	}
 
-	os.Setenv("PORT", fmt.Sprintf("%d", port))
-	os.Setenv("SERVICE_TOKEN", serviceToken)
-	os.Setenv("ENV", "test")
-	os.Setenv("LOG_LEVEL", "error")
-	os.Setenv("RATE_LIMIT_ENABLED", "true")
-	os.Setenv("RATE_LIMIT_GLOBAL_RPM", "1000")
-	os.Setenv("RATE_LIMIT_USER_RPM", "100")
-	os.Setenv("RATE_LIMIT_IP_RPM", "60")
+	// Generate RSA key pair for JWT service-to-service auth
+	testPrivateKey, err = rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return fmt.Errorf("failed to generate RSA key: %w", err)
+	}
 
-	cfg, err := config.Load()
+	privBytes := x509.MarshalPKCS1PrivateKey(testPrivateKey)
+	privPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: privBytes,
+	})
+
+	pubBytes, err := x509.MarshalPKIXPublicKey(&testPrivateKey.PublicKey)
+	if err != nil {
+		return fmt.Errorf("failed to marshal public key: %w", err)
+	}
+	pubPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubBytes,
+	})
+
+	if err := os.Setenv("PORT", fmt.Sprintf("%d", port)); err != nil {
+		return fmt.Errorf("failed to set PORT: %w", err)
+	}
+	if err := os.Setenv("ENV", "test"); err != nil {
+		return fmt.Errorf("failed to set ENV: %w", err)
+	}
+	if err := os.Setenv("LOG_LEVEL", "error"); err != nil {
+		return fmt.Errorf("failed to set LOG_LEVEL: %w", err)
+	}
+	if err := os.Setenv("RATE_LIMIT_ENABLED", "true"); err != nil {
+		return fmt.Errorf("failed to set RATE_LIMIT_ENABLED: %w", err)
+	}
+	if err := os.Setenv("RATE_LIMIT_GLOBAL_RPM", "1000"); err != nil {
+		return fmt.Errorf("failed to set RATE_LIMIT_GLOBAL_RPM: %w", err)
+	}
+	if err := os.Setenv("RATE_LIMIT_USER_RPM", "100"); err != nil {
+		return fmt.Errorf("failed to set RATE_LIMIT_USER_RPM: %w", err)
+	}
+	if err := os.Setenv("RATE_LIMIT_IP_RPM", "60"); err != nil {
+		return fmt.Errorf("failed to set RATE_LIMIT_IP_RPM: %w", err)
+	}
+	if err := os.Setenv("JWT_PUBLIC_KEY", string(pubPEM)); err != nil {
+		return fmt.Errorf("failed to set JWT_PUBLIC_KEY: %w", err)
+	}
+	if err := os.Setenv("JWT_PRIVATE_KEY", string(privPEM)); err != nil {
+		return fmt.Errorf("failed to set JWT_PRIVATE_KEY: %w", err)
+	}
+
+	cfg, err := config.Load("", "", "")
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
-	testConfig = cfg
-
 	server, err := gatewayhttp.NewServer(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
@@ -117,11 +161,15 @@ func cleanup(ctx context.Context) {
 	if testServer != nil {
 		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		testServer.Shutdown(shutdownCtx)
+		if err := testServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("failed to shutdown server: %v", err)
+		}
 	}
 
 	if redisContainer != nil {
-		redisContainer.Terminate(ctx)
+		if err := redisContainer.Terminate(ctx); err != nil {
+			log.Printf("failed to terminate redis container: %v", err)
+		}
 	}
 }
 
@@ -130,7 +178,7 @@ func getFreePort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	return listener.Addr().(*net.TCPAddr).Port, nil
 }
 
@@ -141,7 +189,7 @@ func waitForServer(url string, timeout time.Duration) error {
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(url + "/health")
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
@@ -153,4 +201,18 @@ func waitForServer(url string, timeout time.Duration) error {
 
 func getHTTPClient() *http.Client {
 	return &http.Client{Timeout: 5 * time.Second}
+}
+
+func signTestServiceToken(serviceName string) string {
+	now := time.Now()
+	claims := jwtlib.MapClaims{
+		"sub": serviceName,
+		"aud": "api-gateway",
+		"iss": serviceName,
+		"iat": now.Unix(),
+		"exp": now.Add(5 * time.Minute).Unix(),
+	}
+	token := jwtlib.NewWithClaims(jwtlib.SigningMethodRS256, claims)
+	tokenString, _ := token.SignedString(testPrivateKey)
+	return tokenString
 }

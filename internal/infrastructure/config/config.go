@@ -13,7 +13,6 @@ type Config struct {
 	CORSAllowedOrigins  []string      `envconfig:"CORS_ALLOWED_ORIGINS" default:"*"`
 	CORSAllowedMethods  []string      `envconfig:"CORS_ALLOWED_METHODS" default:"GET,POST,PUT,DELETE,OPTIONS"`
 	CORSAllowedHeaders  []string      `envconfig:"CORS_ALLOWED_HEADERS" default:"Origin,Content-Type,Accept,Authorization,X-Request-ID"`
-	ServiceToken        string        `envconfig:"SERVICE_TOKEN" required:"true"`
 	HeartbeatTTL        time.Duration `envconfig:"HEARTBEAT_TTL" default:"30s"`
 	HealthCheckInterval time.Duration `envconfig:"HEALTH_CHECK_INTERVAL" default:"10s"`
 

@@ -3,105 +3,59 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
-// Route represents a route to be registered with the api.
-type Route struct {
-	Method    string   `json:"method"`
-	Path      string   `json:"path"`
-	Public    bool     `json:"public"`
-	RateLimit int      `json:"rate_limit,omitempty"`
-	Scopes    []string `json:"scopes,omitempty"`
-}
-
-// RegisterRequest contains the data needed to register a service.
-type RegisterRequest struct {
-	ServiceName string            `json:"service_name"`
-	Host        string            `json:"host"`
-	Port        int               `json:"port"`
-	HealthURL   string            `json:"health_url,omitempty"`
-	Version     string            `json:"version,omitempty"`
-	BasePath    string            `json:"base_path"`
-	Routes      []Route           `json:"routes"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-}
-
-// RegisterResponse contains the response from a successful registration.
-type RegisterResponse struct {
-	InstanceID        string   `json:"instance_id"`
-	HeartbeatInterval int      `json:"heartbeat_interval"`
-	HeartbeatURL      string   `json:"heartbeat_url"`
-	RegisteredRoutes  []string `json:"registered_routes"`
-}
-
-// RouteCollision represents a conflict with an existing route.
-type RouteCollision struct {
-	Method        string `json:"method"`
-	Path          string `json:"path"`
-	CollisionType string `json:"collision_type"`
-	RegisteredBy  string `json:"registered_by"`
-}
-
-// CollisionError is returned when routes conflict with existing registrations.
-type CollisionError struct {
-	Collisions []RouteCollision
-}
-
-func (e *CollisionError) Error() string {
-	return fmt.Sprintf("route collision: %d route(s) already registered", len(e.Collisions))
-}
-
-// RegistryClient manages service registration with the API Gateway.
 type RegistryClient struct {
-	gatewayURL string
-	token      string
-	instanceID string
+	gatewayURL  string
+	privateKey  *rsa.PrivateKey
+	serviceName string
+	instanceID  string
+
+	lastRegisterReq RegisterRequest
 
 	httpClient        *http.Client
 	heartbeatInterval time.Duration
 	stopCh            chan struct{}
+	stopCancel        context.CancelFunc
 	wg                sync.WaitGroup
 	mu                sync.RWMutex
+	registered        bool
+	stopped           bool
 
 	logger *slog.Logger
 }
 
-// Option is a functional option for configuring the RegistryClient.
 type Option func(*RegistryClient)
 
-// WithHTTPClient sets a custom HTTP client.
-func WithHTTPClient(client *http.Client) Option {
-	return func(c *RegistryClient) {
-		c.httpClient = client
-	}
-}
-
-// WithLogger sets a custom logger.
 func WithLogger(logger *slog.Logger) Option {
 	return func(c *RegistryClient) {
 		c.logger = logger
 	}
 }
 
-// WithTimeout sets the HTTP client timeout.
-func WithTimeout(timeout time.Duration) Option {
-	return func(c *RegistryClient) {
-		c.httpClient.Timeout = timeout
+func NewRegistryClient(gatewayURL, privateKeyPEM, serviceName string, opts ...Option) (*RegistryClient, error) {
+	privKey, err := parseRSAPrivateKey(privateKeyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
 	}
-}
 
-// NewRegistryClient creates a new registry client.
-func NewRegistryClient(gatewayURL, token string, opts ...Option) *RegistryClient {
 	c := &RegistryClient{
-		gatewayURL: gatewayURL,
-		token:      token,
+		gatewayURL:  gatewayURL,
+		privateKey:  privKey,
+		serviceName: serviceName,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -113,11 +67,18 @@ func NewRegistryClient(gatewayURL, token string, opts ...Option) *RegistryClient
 		opt(c)
 	}
 
-	return c
+	return c, nil
 }
 
-// Register registers the service with the api.
 func (c *RegistryClient) Register(ctx context.Context, req RegisterRequest) (*RegisterResponse, error) {
+	c.mu.Lock()
+	if c.registered {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("already registered, call Shutdown first")
+	}
+	c.lastRegisterReq = req
+	c.mu.Unlock()
+
 	var resp *RegisterResponse
 	var err error
 
@@ -133,6 +94,7 @@ func (c *RegistryClient) Register(ctx context.Context, req RegisterRequest) (*Re
 	c.mu.Lock()
 	c.instanceID = resp.InstanceID
 	c.heartbeatInterval = time.Duration(resp.HeartbeatInterval) * time.Second
+	c.registered = true
 	c.mu.Unlock()
 
 	c.startHeartbeat()
@@ -158,14 +120,23 @@ func (c *RegistryClient) doRegister(ctx context.Context, req RegisterRequest) (*
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	token, err := c.serviceToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate service token: %w", err)
+	}
+
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Service-Token", c.token)
+	httpReq.Header.Set("X-Service-Token", token)
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+		}
+	}(httpResp.Body)
 
 	respBody, err := io.ReadAll(httpResp.Body)
 	if err != nil {
@@ -197,75 +168,35 @@ func (c *RegistryClient) doRegister(ctx context.Context, req RegisterRequest) (*
 	return &resp, nil
 }
 
-func (c *RegistryClient) startHeartbeat() {
+func (c *RegistryClient) reregister(ctx context.Context) error {
 	c.mu.RLock()
-	interval := c.heartbeatInterval
+	req := c.lastRegisterReq
 	c.mu.RUnlock()
 
-	if interval == 0 {
-		interval = 10 * time.Second
-	}
+	var resp *RegisterResponse
+	var err error
 
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				if err := c.sendHeartbeat(context.Background()); err != nil {
-					c.logger.Warn("heartbeat failed", "error", err)
-				}
-			case <-c.stopCh:
-				return
-			}
-		}
-	}()
-}
-
-func (c *RegistryClient) sendHeartbeat(ctx context.Context) error {
-	c.mu.RLock()
-	instanceID := c.instanceID
-	c.mu.RUnlock()
-
-	if instanceID == "" {
-		return fmt.Errorf("not registered")
-	}
-
-	body, err := json.Marshal(map[string]string{
-		"instance_id": instanceID,
+	err = c.retryWithBackoff(ctx, 5, func() error {
+		resp, err = c.doRegister(ctx, req)
+		return err
 	})
 	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
+		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.gatewayURL+"/internal/registry/heartbeat", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
+	c.mu.Lock()
+	c.instanceID = resp.InstanceID
+	c.heartbeatInterval = time.Duration(resp.HeartbeatInterval) * time.Second
+	c.mu.Unlock()
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Service-Token", c.token)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send heartbeat: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("heartbeat failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
+	c.logger.Info("service re-registered",
+		"instance_id", resp.InstanceID,
+		"heartbeat_interval", resp.HeartbeatInterval,
+	)
 
 	return nil
 }
 
-// Deregister removes the service from the api registry.
 func (c *RegistryClient) Deregister(ctx context.Context) error {
 	c.mu.RLock()
 	instanceID := c.instanceID
@@ -288,14 +219,23 @@ func (c *RegistryClient) Deregister(ctx context.Context) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
+	token, err := c.serviceToken()
+	if err != nil {
+		return fmt.Errorf("failed to generate service token: %w", err)
+	}
+
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Service-Token", c.token)
+	req.Header.Set("X-Service-Token", token)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send deregister: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -306,9 +246,19 @@ func (c *RegistryClient) Deregister(ctx context.Context) error {
 	return nil
 }
 
-// Shutdown gracefully shuts down the client, stopping heartbeat and deregistering.
 func (c *RegistryClient) Shutdown(ctx context.Context) error {
+	c.mu.Lock()
+	if c.stopped {
+		c.mu.Unlock()
+		return nil
+	}
+	c.stopped = true
+	c.mu.Unlock()
+
 	close(c.stopCh)
+	if c.stopCancel != nil {
+		c.stopCancel()
+	}
 
 	done := make(chan struct{})
 	go func() {
@@ -325,11 +275,24 @@ func (c *RegistryClient) Shutdown(ctx context.Context) error {
 	return c.Deregister(ctx)
 }
 
-// InstanceID returns the current instance ID.
 func (c *RegistryClient) InstanceID() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.instanceID
+}
+
+func (c *RegistryClient) serviceToken() (string, error) {
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"sub": c.serviceName,
+		"aud": "api-gateway",
+		"iss": c.serviceName,
+		"iat": now.Unix(),
+		"exp": now.Add(5 * time.Minute).Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	return token.SignedString(c.privateKey)
 }
 
 func (c *RegistryClient) retryWithBackoff(ctx context.Context, maxRetries int, fn func() error) error {
@@ -340,7 +303,8 @@ func (c *RegistryClient) retryWithBackoff(ctx context.Context, maxRetries int, f
 		if err := fn(); err != nil {
 			lastErr = err
 
-			if _, ok := err.(*CollisionError); ok {
+			var collisionError *CollisionError
+			if errors.As(err, &collisionError) {
 				return err
 			}
 
@@ -368,4 +332,22 @@ func (c *RegistryClient) retryWithBackoff(ctx context.Context, maxRetries int, f
 	}
 
 	return fmt.Errorf("operation failed after %d retries: %w", maxRetries, lastErr)
+}
+
+func parseRSAPrivateKey(pemStr string) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err == nil {
+		rsaKey, ok := key.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("not an RSA private key")
+		}
+		return rsaKey, nil
+	}
+
+	return x509.ParsePKCS1PrivateKey(block.Bytes)
 }

@@ -8,7 +8,6 @@ import (
 )
 
 type RegistryConfig struct {
-	ServiceToken              string
 	HeartbeatTTL              time.Duration
 	HealthCheckInterval       time.Duration
 	AllowSameServiceOverwrite bool

@@ -2,41 +2,13 @@ package integration
 
 import (
 	"bytes"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"io"
 	"net/http"
 	"os"
 	"testing"
 	"time"
-
-	"github.com/golang-jwt/jwt/v5"
 )
-
-var (
-	testPrivateKey *rsa.PrivateKey
-	testPrivatePEM string
-	testPublicPEM  string
-)
-
-func init() {
-	testPrivateKey, _ = rsa.GenerateKey(rand.Reader, 2048)
-
-	privBytes := x509.MarshalPKCS1PrivateKey(testPrivateKey)
-	testPrivatePEM = string(pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: privBytes,
-	}))
-
-	pubBytes, _ := x509.MarshalPKIXPublicKey(&testPrivateKey.PublicKey)
-	testPublicPEM = string(pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: pubBytes,
-	}))
-}
 
 func TestAuth_PublicRoute_NoTokenRequired(t *testing.T) {
 	mockServer, err := NewMockServer()
@@ -63,7 +35,7 @@ func TestAuth_PublicRoute_NoTokenRequired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -71,7 +43,7 @@ func TestAuth_PublicRoute_NoTokenRequired(t *testing.T) {
 	}
 
 	var response map[string]string
-	json.NewDecoder(resp.Body).Decode(&response)
+	_ = json.NewDecoder(resp.Body).Decode(&response)
 	if response["message"] != "public data" {
 		t.Errorf("unexpected response: %v", response)
 	}
@@ -102,7 +74,7 @@ func TestAuth_ProtectedRoute_WithoutJWTConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if os.Getenv("JWT_PUBLIC_KEY") == "" {
 		if resp.StatusCode == http.StatusOK {
@@ -139,7 +111,7 @@ func TestAuth_RequestIDPropagated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
@@ -170,7 +142,7 @@ func TestAuth_GeneratesRequestID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	responseRequestID := resp.Header.Get("X-Request-ID")
 	if responseRequestID == "" {
@@ -190,7 +162,7 @@ func TestAuth_CORSHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CORS preflight request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		t.Errorf("expected 200 or 204 for CORS preflight, got %d", resp.StatusCode)
@@ -216,7 +188,7 @@ func TestAuth_RateLimiting(t *testing.T) {
 		if err != nil {
 			t.Fatalf("request %d failed: %v", i, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK {
 			successCount++
@@ -239,14 +211,14 @@ func TestAuth_HealthEndpoint_NoAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("health request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200 for /health, got %d", resp.StatusCode)
 	}
 
 	var health map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&health)
+	_ = json.NewDecoder(resp.Body).Decode(&health)
 
 	if health["status"] != "healthy" {
 		t.Errorf("expected status 'healthy', got %v", health["status"])
@@ -260,39 +232,11 @@ func TestAuth_ReadyEndpoint_NoAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ready request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200 for /ready, got %d", resp.StatusCode)
 	}
-}
-
-func generateValidToken(subject, email string, scopes []string) string {
-	claims := jwt.MapClaims{
-		"sub":    subject,
-		"email":  email,
-		"scopes": scopes,
-		"iss":    "auth-service",
-		"iat":    time.Now().Unix(),
-		"exp":    time.Now().Add(1 * time.Hour).Unix(),
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	tokenString, _ := token.SignedString(testPrivateKey)
-	return tokenString
-}
-
-func generateExpiredToken(subject string) string {
-	claims := jwt.MapClaims{
-		"sub": subject,
-		"iss": "auth-service",
-		"iat": time.Now().Add(-2 * time.Hour).Unix(),
-		"exp": time.Now().Add(-1 * time.Hour).Unix(),
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	tokenString, _ := token.SignedString(testPrivateKey)
-	return tokenString
 }
 
 func TestAuth_MultiplePublicRoutes(t *testing.T) {
@@ -325,7 +269,7 @@ func TestAuth_MultiplePublicRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET request failed: %v", err)
 	}
-	defer resp1.Body.Close()
+	defer func() { _ = resp1.Body.Close() }()
 	if resp1.StatusCode != http.StatusOK {
 		t.Errorf("GET /public1 expected 200, got %d", resp1.StatusCode)
 	}
@@ -334,7 +278,7 @@ func TestAuth_MultiplePublicRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST request failed: %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode != http.StatusCreated {
 		t.Errorf("POST /public2 expected 201, got %d", resp2.StatusCode)
 	}
@@ -360,7 +304,7 @@ func TestAuth_MethodNotAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Logf("POST to GET-only route returned %d (route not found for different method)", resp.StatusCode)

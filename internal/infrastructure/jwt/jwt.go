@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/alvas/api-gateway/internal/domain"
-	"github.com/alvas/api-gateway/internal/infrastructure/config"
+	"github.com/apascualco/gotway/internal/domain"
+	"github.com/apascualco/gotway/internal/infrastructure/config"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -227,6 +227,50 @@ func (s *Service) ValidateInternalToken(tokenString string, expectedAudience str
 	}
 
 	return claims, nil
+}
+
+func (s *Service) ValidateServiceToken(tokenString string) (string, error) {
+	if s.publicKey == nil {
+		return "", fmt.Errorf("public key not configured")
+	}
+
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("%w: unexpected signing method %v", domain.ErrTokenMalformed, token.Header["alg"])
+		}
+		return s.publicKey, nil
+	})
+
+	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return "", domain.ErrTokenExpired
+		}
+		if errors.Is(err, jwt.ErrTokenSignatureInvalid) {
+			return "", domain.ErrTokenInvalidSignature
+		}
+		return "", fmt.Errorf("%w: %v", domain.ErrTokenMalformed, err)
+	}
+
+	if !token.Valid {
+		return "", domain.ErrTokenMalformed
+	}
+
+	mapClaims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return "", domain.ErrTokenMalformed
+	}
+
+	aud := getStringClaim(mapClaims, "aud")
+	if aud != "api-gateway" {
+		return "", fmt.Errorf("%w: invalid audience %q", domain.ErrTokenMalformed, aud)
+	}
+
+	sub := getStringClaim(mapClaims, "sub")
+	if sub == "" {
+		return "", fmt.Errorf("%w: missing subject claim", domain.ErrTokenMalformed)
+	}
+
+	return sub, nil
 }
 
 func parseRSAPublicKey(pemStr string) (*rsa.PublicKey, error) {

@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 )
 
 type RegisterRequest struct {
@@ -62,13 +61,13 @@ func TestRegistry_RegisterService_Success(t *testing.T) {
 	body, _ := json.Marshal(req)
 	httpReq, _ := http.NewRequest("POST", testServerURL+"/internal/registry/register", bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Service-Token", serviceToken)
+	httpReq.Header.Set("X-Service-Token", signTestServiceToken(req.ServiceName))
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -118,7 +117,7 @@ func TestRegistry_RegisterService_Unauthorized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected status 401, got %d", resp.StatusCode)
@@ -142,20 +141,20 @@ func TestRegistry_RegisterService_Collision(t *testing.T) {
 	body1, _ := json.Marshal(req1)
 	httpReq1, _ := http.NewRequest("POST", testServerURL+"/internal/registry/register", bytes.NewReader(body1))
 	httpReq1.Header.Set("Content-Type", "application/json")
-	httpReq1.Header.Set("X-Service-Token", serviceToken)
+	httpReq1.Header.Set("X-Service-Token", signTestServiceToken(req1.ServiceName))
 
 	resp1, err := client.Do(httpReq1)
 	if err != nil {
 		t.Fatalf("request 1 failed: %v", err)
 	}
-	defer resp1.Body.Close()
+	defer func() { _ = resp1.Body.Close() }()
 
 	if resp1.StatusCode != http.StatusCreated {
 		t.Fatalf("expected status 201 for first registration, got %d", resp1.StatusCode)
 	}
 
 	var registerResp1 RegisterResponse
-	json.NewDecoder(resp1.Body).Decode(&registerResp1)
+	_ = json.NewDecoder(resp1.Body).Decode(&registerResp1)
 	defer cleanupService(t, registerResp1.InstanceID)
 
 	req2 := RegisterRequest{
@@ -172,13 +171,13 @@ func TestRegistry_RegisterService_Collision(t *testing.T) {
 	body2, _ := json.Marshal(req2)
 	httpReq2, _ := http.NewRequest("POST", testServerURL+"/internal/registry/register", bytes.NewReader(body2))
 	httpReq2.Header.Set("Content-Type", "application/json")
-	httpReq2.Header.Set("X-Service-Token", serviceToken)
+	httpReq2.Header.Set("X-Service-Token", signTestServiceToken(req2.ServiceName))
 
 	resp2, err := client.Do(httpReq2)
 	if err != nil {
 		t.Fatalf("request 2 failed: %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 
 	if resp2.StatusCode != http.StatusConflict {
 		t.Errorf("expected status 409 for collision, got %d", resp2.StatusCode)
@@ -195,13 +194,13 @@ func TestRegistry_Heartbeat_Success(t *testing.T) {
 	body, _ := json.Marshal(heartbeatReq)
 	httpReq, _ := http.NewRequest("POST", testServerURL+"/internal/registry/heartbeat", bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Service-Token", serviceToken)
+	httpReq.Header.Set("X-Service-Token", signTestServiceToken("heartbeat-service"))
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		t.Fatalf("heartbeat request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
@@ -215,13 +214,13 @@ func TestRegistry_Heartbeat_InstanceNotFound(t *testing.T) {
 	body, _ := json.Marshal(heartbeatReq)
 	httpReq, _ := http.NewRequest("POST", testServerURL+"/internal/registry/heartbeat", bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Service-Token", serviceToken)
+	httpReq.Header.Set("X-Service-Token", signTestServiceToken("any-service"))
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		t.Fatalf("heartbeat request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", resp.StatusCode)
@@ -237,13 +236,13 @@ func TestRegistry_Deregister_Success(t *testing.T) {
 	body, _ := json.Marshal(deregisterReq)
 	httpReq, _ := http.NewRequest("POST", testServerURL+"/internal/registry/deregister", bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Service-Token", serviceToken)
+	httpReq.Header.Set("X-Service-Token", signTestServiceToken("deregister-service"))
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		t.Fatalf("deregister request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
@@ -253,13 +252,13 @@ func TestRegistry_Deregister_Success(t *testing.T) {
 	body2, _ := json.Marshal(heartbeatReq)
 	httpReq2, _ := http.NewRequest("POST", testServerURL+"/internal/registry/heartbeat", bytes.NewReader(body2))
 	httpReq2.Header.Set("Content-Type", "application/json")
-	httpReq2.Header.Set("X-Service-Token", serviceToken)
+	httpReq2.Header.Set("X-Service-Token", signTestServiceToken("deregister-service"))
 
 	resp2, err := client.Do(httpReq2)
 	if err != nil {
 		t.Fatalf("heartbeat request failed: %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 
 	if resp2.StatusCode != http.StatusNotFound {
 		t.Errorf("expected service to be removed, got status %d", resp2.StatusCode)
@@ -273,13 +272,13 @@ func TestRegistry_ListServices_Success(t *testing.T) {
 	defer cleanupService(t, instanceID)
 
 	httpReq, _ := http.NewRequest("GET", testServerURL+"/internal/registry/services", nil)
-	httpReq.Header.Set("X-Service-Token", serviceToken)
+	httpReq.Header.Set("X-Service-Token", signTestServiceToken("list-service"))
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		t.Fatalf("list services request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
@@ -305,7 +304,7 @@ func TestRegistry_ListServices_Unauthorized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list services request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected status 401, got %d", resp.StatusCode)
@@ -329,13 +328,13 @@ func TestRegistry_MultipleInstances_SameService(t *testing.T) {
 	body1, _ := json.Marshal(req1)
 	httpReq1, _ := http.NewRequest("POST", testServerURL+"/internal/registry/register", bytes.NewReader(body1))
 	httpReq1.Header.Set("Content-Type", "application/json")
-	httpReq1.Header.Set("X-Service-Token", serviceToken)
+	httpReq1.Header.Set("X-Service-Token", signTestServiceToken(req1.ServiceName))
 
 	resp1, _ := client.Do(httpReq1)
-	defer resp1.Body.Close()
+	defer func() { _ = resp1.Body.Close() }()
 
 	var registerResp1 RegisterResponse
-	json.NewDecoder(resp1.Body).Decode(&registerResp1)
+	_ = json.NewDecoder(resp1.Body).Decode(&registerResp1)
 	defer cleanupService(t, registerResp1.InstanceID)
 
 	req2 := RegisterRequest{
@@ -352,20 +351,20 @@ func TestRegistry_MultipleInstances_SameService(t *testing.T) {
 	body2, _ := json.Marshal(req2)
 	httpReq2, _ := http.NewRequest("POST", testServerURL+"/internal/registry/register", bytes.NewReader(body2))
 	httpReq2.Header.Set("Content-Type", "application/json")
-	httpReq2.Header.Set("X-Service-Token", serviceToken)
+	httpReq2.Header.Set("X-Service-Token", signTestServiceToken(req2.ServiceName))
 
 	resp2, err := client.Do(httpReq2)
 	if err != nil {
 		t.Fatalf("request 2 failed: %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 
 	if resp2.StatusCode != http.StatusCreated {
 		t.Errorf("expected status 201 for second instance, got %d", resp2.StatusCode)
 	}
 
 	var registerResp2 RegisterResponse
-	json.NewDecoder(resp2.Body).Decode(&registerResp2)
+	_ = json.NewDecoder(resp2.Body).Decode(&registerResp2)
 	defer cleanupService(t, registerResp2.InstanceID)
 
 	if registerResp1.InstanceID == registerResp2.InstanceID {
@@ -373,13 +372,13 @@ func TestRegistry_MultipleInstances_SameService(t *testing.T) {
 	}
 
 	httpReq3, _ := http.NewRequest("GET", testServerURL+"/internal/registry/services", nil)
-	httpReq3.Header.Set("X-Service-Token", serviceToken)
+	httpReq3.Header.Set("X-Service-Token", signTestServiceToken("multi-instance-service"))
 
 	resp3, _ := client.Do(httpReq3)
-	defer resp3.Body.Close()
+	defer func() { _ = resp3.Body.Close() }()
 
 	var services map[string][]interface{}
-	json.NewDecoder(resp3.Body).Decode(&services)
+	_ = json.NewDecoder(resp3.Body).Decode(&services)
 
 	if instances, ok := services["multi-instance-service"]; !ok || len(instances) != 2 {
 		t.Errorf("expected 2 instances of multi-instance-service, got %d", len(instances))
@@ -408,13 +407,13 @@ func registerTestService(t *testing.T, name string, port int, basePath string) s
 	body, _ := json.Marshal(req)
 	httpReq, _ := http.NewRequest("POST", testServerURL+"/internal/registry/register", bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Service-Token", serviceToken)
+	httpReq.Header.Set("X-Service-Token", signTestServiceToken(name))
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		t.Fatalf("failed to register test service: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -422,7 +421,7 @@ func registerTestService(t *testing.T, name string, port int, basePath string) s
 	}
 
 	var registerResp RegisterResponse
-	json.NewDecoder(resp.Body).Decode(&registerResp)
+	_ = json.NewDecoder(resp.Body).Decode(&registerResp)
 	return registerResp.InstanceID
 }
 
@@ -434,40 +433,11 @@ func cleanupService(t *testing.T, instanceID string) {
 	body, _ := json.Marshal(deregisterReq)
 	httpReq, _ := http.NewRequest("POST", testServerURL+"/internal/registry/deregister", bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Service-Token", serviceToken)
+	httpReq.Header.Set("X-Service-Token", signTestServiceToken("cleanup-service"))
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return
 	}
-	resp.Body.Close()
-}
-
-func keepAlive(t *testing.T, instanceID string, duration time.Duration) {
-	t.Helper()
-	client := getHTTPClient()
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	done := time.After(duration)
-	for {
-		select {
-		case <-done:
-			return
-		case <-ticker.C:
-			heartbeatReq := HeartbeatRequest{InstanceID: instanceID}
-			body, _ := json.Marshal(heartbeatReq)
-			httpReq, _ := http.NewRequest("POST", testServerURL+"/internal/registry/heartbeat", bytes.NewReader(body))
-			httpReq.Header.Set("Content-Type", "application/json")
-			httpReq.Header.Set("X-Service-Token", serviceToken)
-
-			resp, err := client.Do(httpReq)
-			if err != nil {
-				t.Logf("heartbeat failed: %v", err)
-				return
-			}
-			resp.Body.Close()
-		}
-	}
+	_ = resp.Body.Close()
 }

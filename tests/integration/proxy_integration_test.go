@@ -45,7 +45,7 @@ func NewMockServer() (*MockServer, error) {
 
 	ms.server = &http.Server{Handler: mux}
 
-	go ms.server.Serve(listener)
+	go func() { _ = ms.server.Serve(listener) }()
 
 	return ms, nil
 }
@@ -61,11 +61,11 @@ func (ms *MockServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		if r.URL.Path == "/health" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"healthy"}`))
+			_, _ = w.Write([]byte(`{"status":"healthy"}`))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(fmt.Sprintf(`{"path":"%s","port":%d}`, r.URL.Path, ms.port)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"path":"%s","port":%d}`, r.URL.Path, ms.port)))
 		return
 	}
 
@@ -73,7 +73,7 @@ func (ms *MockServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(k, v)
 	}
 	w.WriteHeader(resp.StatusCode)
-	w.Write([]byte(resp.Body))
+	_, _ = w.Write([]byte(resp.Body))
 }
 
 func (ms *MockServer) SetResponse(method, path string, resp MockResponse) {
@@ -95,8 +95,8 @@ func (ms *MockServer) Port() int {
 }
 
 func (ms *MockServer) Close() {
-	ms.server.Close()
-	ms.listener.Close()
+	_ = ms.server.Close()
+	_ = ms.listener.Close()
 }
 
 func TestProxy_ForwardsRequest_Success(t *testing.T) {
@@ -122,7 +122,7 @@ func TestProxy_ForwardsRequest_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("proxy request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -145,7 +145,7 @@ func TestProxy_NoRoute_Returns404(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", resp.StatusCode)
@@ -184,7 +184,7 @@ func TestProxy_LoadBalancing_RoundRobin(t *testing.T) {
 		if err != nil {
 			t.Fatalf("request %d failed: %v", i, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	hits1 := mockServer1.GetHitCount()
@@ -224,7 +224,7 @@ func TestProxy_PostRequest_ForwardsBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
@@ -252,7 +252,7 @@ func TestProxy_ForwardsHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
@@ -281,7 +281,7 @@ func TestProxy_ServiceUnavailable_Returns503(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadGateway && resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("expected status 502 or 503, got %d", resp.StatusCode)
@@ -305,7 +305,7 @@ func TestProxy_QueryParams_Preserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
@@ -337,13 +337,13 @@ func registerServiceWithPortAndRoutes(t *testing.T, name string, port int, baseP
 	body, _ := json.Marshal(req)
 	httpReq, _ := http.NewRequest("POST", testServerURL+"/internal/registry/register", bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Service-Token", serviceToken)
+	httpReq.Header.Set("X-Service-Token", signTestServiceToken(name))
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		t.Fatalf("failed to register service: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -351,6 +351,6 @@ func registerServiceWithPortAndRoutes(t *testing.T, name string, port int, baseP
 	}
 
 	var registerResp RegisterResponse
-	json.NewDecoder(resp.Body).Decode(&registerResp)
+	_ = json.NewDecoder(resp.Body).Decode(&registerResp)
 	return registerResp.InstanceID
 }

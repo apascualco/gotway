@@ -29,7 +29,6 @@ func setupTestRouter(registry *application.Registry) *gin.Engine {
 
 func TestRegister_Success(t *testing.T) {
 	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
 		HeartbeatTTL: 30 * time.Second,
 	})
 	router := setupTestRouter(registry)
@@ -47,7 +46,6 @@ func TestRegister_Success(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", "/internal/registry/register", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -69,11 +67,53 @@ func TestRegister_Success(t *testing.T) {
 	}
 }
 
-func TestRegister_Unauthorized(t *testing.T) {
+func TestRegister_AntiImpersonation(t *testing.T) {
 	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
+		HeartbeatTTL: 30 * time.Second,
 	})
-	router := setupTestRouter(registry)
+
+	handler := NewRegistryHandler(registry)
+
+	router := gin.New()
+	router.POST("/internal/registry/register", func(c *gin.Context) {
+		c.Set("service_name", "real-service")
+		handler.Register(c)
+	})
+
+	body := domain.RegisterRequest{
+		ServiceName: "fake-service",
+		Host:        "localhost",
+		Port:        8081,
+		BasePath:    "/api/v1",
+		Routes: []domain.Route{
+			{Method: "GET", Path: "/users"},
+		},
+	}
+	jsonBody, _ := json.Marshal(body)
+
+	req, _ := http.NewRequest("POST", "/internal/registry/register", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusForbidden {
+		t.Errorf("expected status 403, got %d: %s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestRegister_AntiImpersonation_MatchingName(t *testing.T) {
+	registry := application.NewRegistry(application.RegistryConfig{
+		HeartbeatTTL: 30 * time.Second,
+	})
+
+	handler := NewRegistryHandler(registry)
+
+	router := gin.New()
+	router.POST("/internal/registry/register", func(c *gin.Context) {
+		c.Set("service_name", "test-service")
+		handler.Register(c)
+	})
 
 	body := domain.RegisterRequest{
 		ServiceName: "test-service",
@@ -86,35 +126,20 @@ func TestRegister_Unauthorized(t *testing.T) {
 	}
 	jsonBody, _ := json.Marshal(body)
 
-	tests := []struct {
-		name  string
-		token string
-	}{
-		{"no token", ""},
-		{"wrong token", "wrong-token"},
-	}
+	req, _ := http.NewRequest("POST", "/internal/registry/register", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req, _ := http.NewRequest("POST", "/internal/registry/register", bytes.NewBuffer(jsonBody))
-			req.Header.Set("Content-Type", "application/json")
-			if tt.token != "" {
-				req.Header.Set(HeaderServiceToken, tt.token)
-			}
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
 
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
-
-			if resp.Code != http.StatusUnauthorized {
-				t.Errorf("expected status 401, got %d", resp.Code)
-			}
-		})
+	if resp.Code != http.StatusCreated {
+		t.Errorf("expected status 201, got %d: %s", resp.Code, resp.Body.String())
 	}
 }
 
 func TestRegister_Collision(t *testing.T) {
 	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
+		HeartbeatTTL: 30 * time.Second,
 	})
 	router := setupTestRouter(registry)
 
@@ -131,7 +156,6 @@ func TestRegister_Collision(t *testing.T) {
 
 	req1, _ := http.NewRequest("POST", "/internal/registry/register", bytes.NewBuffer(jsonBody1))
 	req1.Header.Set("Content-Type", "application/json")
-	req1.Header.Set(HeaderServiceToken, "test-token")
 
 	resp1 := httptest.NewRecorder()
 	router.ServeHTTP(resp1, req1)
@@ -153,7 +177,6 @@ func TestRegister_Collision(t *testing.T) {
 
 	req2, _ := http.NewRequest("POST", "/internal/registry/register", bytes.NewBuffer(jsonBody2))
 	req2.Header.Set("Content-Type", "application/json")
-	req2.Header.Set(HeaderServiceToken, "test-token")
 
 	resp2 := httptest.NewRecorder()
 	router.ServeHTTP(resp2, req2)
@@ -176,9 +199,7 @@ func TestRegister_Collision(t *testing.T) {
 }
 
 func TestRegister_InvalidRequest(t *testing.T) {
-	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
-	})
+	registry := application.NewRegistry(application.RegistryConfig{})
 	router := setupTestRouter(registry)
 
 	body := domain.RegisterRequest{
@@ -193,7 +214,6 @@ func TestRegister_InvalidRequest(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", "/internal/registry/register", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -204,14 +224,11 @@ func TestRegister_InvalidRequest(t *testing.T) {
 }
 
 func TestRegister_InvalidJSON(t *testing.T) {
-	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
-	})
+	registry := application.NewRegistry(application.RegistryConfig{})
 	router := setupTestRouter(registry)
 
 	req, _ := http.NewRequest("POST", "/internal/registry/register", bytes.NewBuffer([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -223,7 +240,6 @@ func TestRegister_InvalidJSON(t *testing.T) {
 
 func TestHeartbeat_Success(t *testing.T) {
 	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
 		HeartbeatTTL: 30 * time.Second,
 	})
 	router := setupTestRouter(registry)
@@ -241,13 +257,12 @@ func TestHeartbeat_Success(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", "/internal/registry/register", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
 	var registerResp domain.RegisterResponse
-	json.Unmarshal(resp.Body.Bytes(), &registerResp)
+	_ = json.Unmarshal(resp.Body.Bytes(), &registerResp)
 
 	heartbeatBody := domain.HeartbeatRequest{
 		InstanceID: registerResp.InstanceID,
@@ -256,7 +271,6 @@ func TestHeartbeat_Success(t *testing.T) {
 
 	req, _ = http.NewRequest("POST", "/internal/registry/heartbeat", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp = httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -275,47 +289,8 @@ func TestHeartbeat_Success(t *testing.T) {
 	}
 }
 
-func TestHeartbeat_Unauthorized(t *testing.T) {
-	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
-	})
-	router := setupTestRouter(registry)
-
-	body := domain.HeartbeatRequest{
-		InstanceID: "some-instance-id",
-	}
-	jsonBody, _ := json.Marshal(body)
-
-	tests := []struct {
-		name  string
-		token string
-	}{
-		{"no token", ""},
-		{"wrong token", "wrong-token"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req, _ := http.NewRequest("POST", "/internal/registry/heartbeat", bytes.NewBuffer(jsonBody))
-			req.Header.Set("Content-Type", "application/json")
-			if tt.token != "" {
-				req.Header.Set(HeaderServiceToken, tt.token)
-			}
-
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
-
-			if resp.Code != http.StatusUnauthorized {
-				t.Errorf("expected status 401, got %d", resp.Code)
-			}
-		})
-	}
-}
-
 func TestHeartbeat_InstanceNotFound(t *testing.T) {
-	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
-	})
+	registry := application.NewRegistry(application.RegistryConfig{})
 	router := setupTestRouter(registry)
 
 	body := domain.HeartbeatRequest{
@@ -325,7 +300,6 @@ func TestHeartbeat_InstanceNotFound(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", "/internal/registry/heartbeat", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -345,14 +319,11 @@ func TestHeartbeat_InstanceNotFound(t *testing.T) {
 }
 
 func TestHeartbeat_InvalidJSON(t *testing.T) {
-	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
-	})
+	registry := application.NewRegistry(application.RegistryConfig{})
 	router := setupTestRouter(registry)
 
 	req, _ := http.NewRequest("POST", "/internal/registry/heartbeat", bytes.NewBuffer([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -364,7 +335,6 @@ func TestHeartbeat_InvalidJSON(t *testing.T) {
 
 func TestDeregister_Success(t *testing.T) {
 	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
 		HeartbeatTTL: 30 * time.Second,
 	})
 	router := setupTestRouter(registry)
@@ -382,13 +352,12 @@ func TestDeregister_Success(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", "/internal/registry/register", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
 	var registerResp domain.RegisterResponse
-	json.Unmarshal(resp.Body.Bytes(), &registerResp)
+	_ = json.Unmarshal(resp.Body.Bytes(), &registerResp)
 
 	deregisterBody := domain.DeregisterRequest{
 		InstanceID: registerResp.InstanceID,
@@ -397,7 +366,6 @@ func TestDeregister_Success(t *testing.T) {
 
 	req, _ = http.NewRequest("POST", "/internal/registry/deregister", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp = httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -416,47 +384,8 @@ func TestDeregister_Success(t *testing.T) {
 	}
 }
 
-func TestDeregister_Unauthorized(t *testing.T) {
-	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
-	})
-	router := setupTestRouter(registry)
-
-	body := domain.DeregisterRequest{
-		InstanceID: "some-instance-id",
-	}
-	jsonBody, _ := json.Marshal(body)
-
-	tests := []struct {
-		name  string
-		token string
-	}{
-		{"no token", ""},
-		{"wrong token", "wrong-token"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req, _ := http.NewRequest("POST", "/internal/registry/deregister", bytes.NewBuffer(jsonBody))
-			req.Header.Set("Content-Type", "application/json")
-			if tt.token != "" {
-				req.Header.Set(HeaderServiceToken, tt.token)
-			}
-
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
-
-			if resp.Code != http.StatusUnauthorized {
-				t.Errorf("expected status 401, got %d", resp.Code)
-			}
-		})
-	}
-}
-
 func TestDeregister_InstanceNotFound(t *testing.T) {
-	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
-	})
+	registry := application.NewRegistry(application.RegistryConfig{})
 	router := setupTestRouter(registry)
 
 	body := domain.DeregisterRequest{
@@ -466,7 +395,6 @@ func TestDeregister_InstanceNotFound(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", "/internal/registry/deregister", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -487,7 +415,6 @@ func TestDeregister_InstanceNotFound(t *testing.T) {
 
 func TestListServices_Success(t *testing.T) {
 	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
 		HeartbeatTTL: 30 * time.Second,
 	})
 	router := setupTestRouter(registry)
@@ -505,13 +432,11 @@ func TestListServices_Success(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", "/internal/registry/register", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
 	req, _ = http.NewRequest("GET", "/internal/registry/services", nil)
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp = httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -536,49 +461,15 @@ func TestListServices_Success(t *testing.T) {
 }
 
 func TestListServices_Empty(t *testing.T) {
-	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
-	})
+	registry := application.NewRegistry(application.RegistryConfig{})
 	router := setupTestRouter(registry)
 
 	req, _ := http.NewRequest("GET", "/internal/registry/services", nil)
-	req.Header.Set(HeaderServiceToken, "test-token")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
 	if resp.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.Code)
-	}
-}
-
-func TestListServices_Unauthorized(t *testing.T) {
-	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
-	})
-	router := setupTestRouter(registry)
-
-	tests := []struct {
-		name  string
-		token string
-	}{
-		{"no token", ""},
-		{"wrong token", "wrong-token"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req, _ := http.NewRequest("GET", "/internal/registry/services", nil)
-			if tt.token != "" {
-				req.Header.Set(HeaderServiceToken, tt.token)
-			}
-
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
-
-			if resp.Code != http.StatusUnauthorized {
-				t.Errorf("expected status 401, got %d", resp.Code)
-			}
-		})
 	}
 }

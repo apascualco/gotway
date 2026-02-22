@@ -10,11 +10,10 @@ import (
 
 func setupTestRegistry() *application.Registry {
 	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
 		HeartbeatTTL: 30 * time.Second,
 	})
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "user-service",
 		Host:        "localhost",
 		Port:        8081,
@@ -27,7 +26,7 @@ func setupTestRegistry() *application.Registry {
 		},
 	})
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "auth-service",
 		Host:        "localhost",
 		Port:        8082,

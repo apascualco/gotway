@@ -24,7 +24,6 @@ func init() {
 
 func setupProxyTestServer() (*application.Registry, *httptest.Server) {
 	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
 		HeartbeatTTL: 30 * time.Second,
 	})
 
@@ -59,7 +58,7 @@ func TestProxy_ForwardsRequest(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"message":    "hello from backend",
 			"method":     r.Method,
 			"path":       r.URL.Path,
@@ -74,7 +73,7 @@ func TestProxy_ForwardsRequest(t *testing.T) {
 
 	host, port := parseHostPort(backend.URL)
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "test-service",
 		Host:        host,
 		Port:        port,
@@ -89,7 +88,7 @@ func TestProxy_ForwardsRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -123,7 +122,7 @@ func TestProxy_NoRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", resp.StatusCode)
@@ -143,7 +142,7 @@ func TestProxy_NoHealthyInstances(t *testing.T) {
 	registry, gateway := setupProxyTestServer()
 	defer gateway.Close()
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "unhealthy-service",
 		Host:        "localhost",
 		Port:        9999,
@@ -162,7 +161,7 @@ func TestProxy_NoHealthyInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		body, _ := io.ReadAll(resp.Body)
@@ -183,7 +182,7 @@ func TestProxy_UpstreamError(t *testing.T) {
 	registry, gateway := setupProxyTestServer()
 	defer gateway.Close()
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "dead-service",
 		Host:        "localhost",
 		Port:        59999,
@@ -197,7 +196,7 @@ func TestProxy_UpstreamError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadGateway {
 		body, _ := io.ReadAll(resp.Body)
@@ -210,7 +209,7 @@ func TestProxy_PostRequest(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"method":       r.Method,
 			"content_type": r.Header.Get("Content-Type"),
 			"body":         string(body),
@@ -223,7 +222,7 @@ func TestProxy_PostRequest(t *testing.T) {
 
 	host, port := parseHostPort(backend.URL)
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "test-service",
 		Host:        host,
 		Port:        port,
@@ -237,7 +236,7 @@ func TestProxy_PostRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -260,7 +259,7 @@ func TestProxy_ForwardsHeaders(t *testing.T) {
 		receivedHeaders = r.Header.Clone()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"status": "ok",
 		})
 	}))
@@ -271,7 +270,7 @@ func TestProxy_ForwardsHeaders(t *testing.T) {
 
 	host, port := parseHostPort(backend.URL)
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "header-test-service",
 		Host:        host,
 		Port:        port,
@@ -291,7 +290,7 @@ func TestProxy_ForwardsHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -336,7 +335,7 @@ func TestProxy_RemovesHopByHopHeaders(t *testing.T) {
 
 	host, port := parseHostPort(backend.URL)
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "hop-test-service",
 		Host:        host,
 		Port:        port,
@@ -356,7 +355,7 @@ func TestProxy_RemovesHopByHopHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	hopHeaders := []string{"Connection", "Keep-Alive", "Proxy-Authorization"}
 	for _, h := range hopHeaders {
@@ -368,7 +367,6 @@ func TestProxy_RemovesHopByHopHeaders(t *testing.T) {
 
 func setupProxyTestServerWithAuth(privateKey *rsa.PrivateKey) (*application.Registry, *httptest.Server, *jwt.Service) {
 	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken: "test-token",
 		HeartbeatTTL: 30 * time.Second,
 	})
 
@@ -415,7 +413,7 @@ func TestProxy_PublicRouteNoAuth(t *testing.T) {
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 	defer backend.Close()
 
@@ -424,7 +422,7 @@ func TestProxy_PublicRouteNoAuth(t *testing.T) {
 
 	host, port := parseHostPort(backend.URL)
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "public-service",
 		Host:        host,
 		Port:        port,
@@ -438,7 +436,7 @@ func TestProxy_PublicRouteNoAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -459,7 +457,7 @@ func TestProxy_ProtectedRouteNoToken(t *testing.T) {
 
 	host, port := parseHostPort(backend.URL)
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "protected-service",
 		Host:        host,
 		Port:        port,
@@ -473,7 +471,7 @@ func TestProxy_ProtectedRouteNoToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		body, _ := io.ReadAll(resp.Body)
@@ -488,7 +486,7 @@ func TestProxy_ProtectedRouteWithValidToken(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedAuthHeader = r.Header.Get("Authorization")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "authenticated"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "authenticated"})
 	}))
 	defer backend.Close()
 
@@ -497,7 +495,7 @@ func TestProxy_ProtectedRouteWithValidToken(t *testing.T) {
 
 	host, port := parseHostPort(backend.URL)
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "auth-test-service",
 		Host:        host,
 		Port:        port,
@@ -517,7 +515,7 @@ func TestProxy_ProtectedRouteWithValidToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -545,7 +543,7 @@ func TestProxy_ProtectedRouteInsufficientScopes(t *testing.T) {
 
 	host, port := parseHostPort(backend.URL)
 
-	registry.Register(&domain.RegisterRequest{
+	_, _ = registry.Register(&domain.RegisterRequest{
 		ServiceName: "admin-service",
 		Host:        host,
 		Port:        port,
@@ -565,7 +563,7 @@ func TestProxy_ProtectedRouteInsufficientScopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusForbidden {
 		body, _ := io.ReadAll(resp.Body)

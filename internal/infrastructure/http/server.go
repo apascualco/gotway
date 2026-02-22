@@ -32,12 +32,10 @@ type Server struct {
 
 func NewServer(cfg *config.Config) (*Server, error) {
 	slog.Debug("new application registry",
-		slog.String("service_token", cfg.ServiceToken),
 		slog.Duration("heartbeat_ttl", cfg.HeartbeatTTL),
 		slog.Duration("health_check_interval", cfg.HealthCheckInterval),
 	)
 	registry := application.NewRegistry(application.RegistryConfig{
-		ServiceToken:        cfg.ServiceToken,
 		HeartbeatTTL:        cfg.HeartbeatTTL,
 		HealthCheckInterval: cfg.HealthCheckInterval,
 	})
@@ -119,6 +117,10 @@ func (s *Server) setupRegistryRoutes() {
 	registryHandler := handler.NewRegistryHandler(s.registry)
 
 	internal := s.router.Group("/internal/registry")
+	if s.jwtService != nil {
+		serviceAuth := middleware.NewServiceAuthMiddleware(s.jwtService)
+		internal.Use(serviceAuth.Authenticate())
+	}
 	{
 		internal.POST("/register", registryHandler.Register)
 		internal.POST("/heartbeat", registryHandler.Heartbeat)

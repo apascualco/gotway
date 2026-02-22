@@ -9,8 +9,13 @@ import (
 
 func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		start := time.Now()
 		path := c.Request.URL.Path
+		if path == "/health" || path == "/ready" {
+			c.Next()
+			return
+		}
+
+		start := time.Now()
 		query := c.Request.URL.RawQuery
 		method := c.Request.Method
 

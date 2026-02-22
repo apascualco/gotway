@@ -351,3 +351,108 @@ func TestGenerateServiceToken(t *testing.T) {
 		t.Errorf("Trace len = %v, want 2", len(claims.Trace))
 	}
 }
+
+func TestValidateServiceToken_Valid(t *testing.T) {
+	svc := createTestService(t)
+
+	// Sign a service token with the test service's private key
+	now := time.Now()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"sub": "hello-world",
+		"aud": "api-gateway",
+		"iss": "hello-world",
+		"iat": now.Unix(),
+		"exp": now.Add(5 * time.Minute).Unix(),
+	})
+	tokenString, err := token.SignedString(svc.privateKey)
+	if err != nil {
+		t.Fatalf("failed to sign token: %v", err)
+	}
+
+	serviceName, err := svc.ValidateServiceToken(tokenString)
+	if err != nil {
+		t.Fatalf("ValidateServiceToken() error = %v", err)
+	}
+
+	if serviceName != "hello-world" {
+		t.Errorf("serviceName = %v, want hello-world", serviceName)
+	}
+}
+
+func TestValidateServiceToken_Expired(t *testing.T) {
+	svc := createTestService(t)
+
+	now := time.Now()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"sub": "hello-world",
+		"aud": "api-gateway",
+		"iss": "hello-world",
+		"iat": now.Add(-10 * time.Minute).Unix(),
+		"exp": now.Add(-5 * time.Minute).Unix(),
+	})
+	tokenString, _ := token.SignedString(svc.privateKey)
+
+	_, err := svc.ValidateServiceToken(tokenString)
+	if err != domain.ErrTokenExpired {
+		t.Errorf("ValidateServiceToken() error = %v, want ErrTokenExpired", err)
+	}
+}
+
+func TestValidateServiceToken_WrongAudience(t *testing.T) {
+	svc := createTestService(t)
+
+	now := time.Now()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"sub": "hello-world",
+		"aud": "wrong-audience",
+		"iss": "hello-world",
+		"iat": now.Unix(),
+		"exp": now.Add(5 * time.Minute).Unix(),
+	})
+	tokenString, _ := token.SignedString(svc.privateKey)
+
+	_, err := svc.ValidateServiceToken(tokenString)
+	if err == nil {
+		t.Error("ValidateServiceToken() should fail for wrong audience")
+	}
+}
+
+func TestValidateServiceToken_MissingSubject(t *testing.T) {
+	svc := createTestService(t)
+
+	now := time.Now()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"aud": "api-gateway",
+		"iss": "hello-world",
+		"iat": now.Unix(),
+		"exp": now.Add(5 * time.Minute).Unix(),
+	})
+	tokenString, _ := token.SignedString(svc.privateKey)
+
+	_, err := svc.ValidateServiceToken(tokenString)
+	if err == nil {
+		t.Error("ValidateServiceToken() should fail for missing subject")
+	}
+}
+
+func TestValidateServiceToken_InvalidSignature(t *testing.T) {
+	svc := createTestService(t)
+	differentKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+
+	now := time.Now()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"sub": "hello-world",
+		"aud": "api-gateway",
+		"iss": "hello-world",
+		"iat": now.Unix(),
+		"exp": now.Add(5 * time.Minute).Unix(),
+	})
+	tokenString, _ := token.SignedString(differentKey)
+
+	_, err := svc.ValidateServiceToken(tokenString)
+	if err != domain.ErrTokenInvalidSignature {
+		t.Errorf("ValidateServiceToken() error = %v, want ErrTokenInvalidSignature", err)
+	}
+
+	_ = svc
+}

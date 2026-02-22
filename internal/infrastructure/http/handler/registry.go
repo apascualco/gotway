@@ -9,8 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const HeaderServiceToken = "X-Service-Token"
-
 type RegistryHandler struct {
 	registry *application.Registry
 }
@@ -20,14 +18,6 @@ func NewRegistryHandler(registry *application.Registry) *RegistryHandler {
 }
 
 func (h *RegistryHandler) Register(c *gin.Context) {
-	token := c.GetHeader(HeaderServiceToken)
-	if !h.registry.ValidateToken(token) {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "invalid_token",
-		})
-		return
-	}
-
 	var req domain.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -35,6 +25,16 @@ func (h *RegistryHandler) Register(c *gin.Context) {
 			"message": err.Error(),
 		})
 		return
+	}
+
+	if serviceName, exists := c.Get("service_name"); exists {
+		if name, ok := serviceName.(string); ok && name != req.ServiceName {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":   "forbidden",
+				"message": "service name does not match authenticated identity",
+			})
+			return
+		}
 	}
 
 	resp, err := h.registry.Register(&req)
@@ -59,14 +59,6 @@ func (h *RegistryHandler) Register(c *gin.Context) {
 }
 
 func (h *RegistryHandler) Heartbeat(c *gin.Context) {
-	token := c.GetHeader(HeaderServiceToken)
-	if !h.registry.ValidateToken(token) {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "invalid_token",
-		})
-		return
-	}
-
 	var req domain.HeartbeatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -95,14 +87,6 @@ func (h *RegistryHandler) Heartbeat(c *gin.Context) {
 }
 
 func (h *RegistryHandler) Deregister(c *gin.Context) {
-	token := c.GetHeader(HeaderServiceToken)
-	if !h.registry.ValidateToken(token) {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "invalid_token",
-		})
-		return
-	}
-
 	var req domain.DeregisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -131,14 +115,6 @@ func (h *RegistryHandler) Deregister(c *gin.Context) {
 }
 
 func (h *RegistryHandler) ListServices(c *gin.Context) {
-	token := c.GetHeader(HeaderServiceToken)
-	if !h.registry.ValidateToken(token) {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "invalid_token",
-		})
-		return
-	}
-
 	services := h.registry.GetAllServices()
 	c.JSON(http.StatusOK, gin.H{
 		"services": services,
