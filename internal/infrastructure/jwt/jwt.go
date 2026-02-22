@@ -6,6 +6,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/apascualco/gotway/internal/domain"
@@ -274,7 +276,7 @@ func (s *Service) ValidateServiceToken(tokenString string) (string, error) {
 }
 
 func parseRSAPublicKey(pemStr string) (*rsa.PublicKey, error) {
-	block, _ := pem.Decode([]byte(pemStr))
+	block, _ := pem.Decode([]byte(normalizePEM(pemStr)))
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}
@@ -293,7 +295,7 @@ func parseRSAPublicKey(pemStr string) (*rsa.PublicKey, error) {
 }
 
 func parseRSAPrivateKey(pemStr string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(pemStr))
+	block, _ := pem.Decode([]byte(normalizePEM(pemStr)))
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}
@@ -328,4 +330,30 @@ func getStringSliceClaim(claims jwt.MapClaims, key string) []string {
 		return result
 	}
 	return nil
+}
+
+var pemHeaderRe = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]+-----)`)
+var pemFooterRe = regexp.MustCompile(`(?i)(-----END [A-Z ]+-----)`)
+
+func normalizePEM(s string) string {
+	if strings.Contains(s, "\n") {
+		return s
+	}
+	s = pemHeaderRe.ReplaceAllString(s, "$1\n")
+	s = pemFooterRe.ReplaceAllString(s, "\n$1")
+	s = strings.TrimSpace(s)
+	parts := strings.SplitN(s, "\n", 2)
+	if len(parts) != 2 {
+		return s
+	}
+	header := parts[0]
+	rest := parts[1]
+	parts = strings.SplitN(rest, "\n", 2)
+	if len(parts) != 2 {
+		return s
+	}
+	body := parts[0]
+	footer := parts[1]
+	body = strings.ReplaceAll(body, " ", "\n")
+	return header + "\n" + body + "\n" + footer + "\n"
 }

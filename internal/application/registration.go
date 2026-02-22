@@ -77,18 +77,21 @@ func (r *Registry) Deregister(instanceID string) error {
 
 	serviceName := instance.ServiceName
 
-	for key, entry := range r.routes {
-		if entry.ServiceName == serviceName {
-			delete(r.routes, key)
-		}
-	}
-
 	instanceIDs := r.services[serviceName]
 	for i, id := range instanceIDs {
 		if id == instanceID {
 			r.services[serviceName] = append(instanceIDs[:i], instanceIDs[i+1:]...)
 			break
 		}
+	}
+
+	if len(r.services[serviceName]) == 0 {
+		for key, entry := range r.routes {
+			if entry.ServiceName == serviceName {
+				delete(r.routes, key)
+			}
+		}
+		delete(r.services, serviceName)
 	}
 
 	delete(r.instances, instanceID)

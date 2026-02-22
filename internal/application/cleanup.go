@@ -74,18 +74,21 @@ func (r *Registry) removeInstanceLocked(instanceID string) {
 
 	s := instance.ServiceName
 
-	for key, entry := range r.routes {
-		if entry.ServiceName == s {
-			delete(r.routes, key)
-		}
-	}
-
 	instanceIDs := r.services[s]
 	for i, id := range instanceIDs {
 		if id == instanceID {
 			r.services[s] = append(instanceIDs[:i], instanceIDs[i+1:]...)
 			break
 		}
+	}
+
+	if len(r.services[s]) == 0 {
+		for key, entry := range r.routes {
+			if entry.ServiceName == s {
+				delete(r.routes, key)
+			}
+		}
+		delete(r.services, s)
 	}
 
 	delete(r.instances, instanceID)

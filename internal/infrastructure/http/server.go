@@ -95,6 +95,7 @@ func (s *Server) setupRouter() {
 	s.router = gin.New()
 	s.router.Use(middleware.Recovery())
 	s.router.Use(middleware.Logger())
+	s.router.Use(middleware.TraceMiddleware(middleware.NewW3CTraceProvider()))
 	s.router.Use(middleware.RequestID())
 	s.router.Use(middleware.CORS(middleware.CORSConfig{
 		AllowedOrigins: s.config.CORSAllowedOrigins,

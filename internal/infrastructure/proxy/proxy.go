@@ -111,8 +111,22 @@ func (p *ProxyHandler) Handle(c *gin.Context) {
 			}
 			req.Header.Set("X-Forwarded-Proto", proto)
 
-			if requestID := c.GetHeader("X-Request-ID"); requestID != "" {
+			if requestID := c.GetString("request_id"); requestID != "" {
 				req.Header.Set("X-Request-ID", requestID)
+			}
+
+			if traceID := c.GetString("trace_id"); traceID != "" {
+				spanID := c.GetString("span_id")
+				flags := c.GetString("trace_flags")
+				if flags == "" {
+					flags = "01"
+				}
+				req.Header.Set("Traceparent", fmt.Sprintf("00-%s-%s-%s", traceID, spanID, flags))
+			}
+			if tracestate, exists := c.Get("trace_state"); exists {
+				if ts, ok := tracestate.(string); ok && ts != "" {
+					req.Header.Set("Tracestate", ts)
+				}
 			}
 
 			req.Header.Set("X-Forwarded-Service", match.Entry.ServiceName)

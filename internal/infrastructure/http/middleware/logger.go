@@ -24,6 +24,8 @@ func Logger() gin.HandlerFunc {
 		duration := time.Since(start)
 		status := c.Writer.Status()
 		requestID, _ := c.Get("request_id")
+		traceID, _ := c.Get("trace_id")
+		spanID, _ := c.Get("span_id")
 
 		attrs := []any{
 			"method", method,
@@ -31,6 +33,8 @@ func Logger() gin.HandlerFunc {
 			"status", status,
 			"duration", duration.String(),
 			"request_id", requestID,
+			"trace_id", traceID,
+			"span_id", spanID,
 			"client_ip", c.ClientIP(),
 		}
 
