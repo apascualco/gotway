@@ -15,6 +15,7 @@ import (
 	"github.com/apascualco/gotway/internal/infrastructure/proxy"
 	"github.com/apascualco/gotway/internal/infrastructure/ratelimit"
 	"github.com/apascualco/gotway/internal/infrastructure/redis"
+	"github.com/apascualco/gotway/internal/infrastructure/tracing"
 	"github.com/gin-gonic/gin"
 )
 
@@ -28,6 +29,7 @@ type Server struct {
 	authMiddleware *middleware.AuthMiddleware
 	redisClient    *redis.Client
 	rateLimiter    ratelimit.RateLimiter
+	spanExporter   tracing.SpanExporter
 }
 
 func NewServer(cfg *config.Config) (*Server, error) {
@@ -75,6 +77,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		slog.Debug("rate limiting disabled")
 	}
 
+	spanExporter := tracing.NewExporter(cfg)
+
 	s := &Server{
 		config:         cfg,
 		startTime:      time.Now(),
@@ -83,6 +87,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		authMiddleware: authMiddleware,
 		redisClient:    redisClient,
 		rateLimiter:    rateLimiter,
+		spanExporter:   spanExporter,
 	}
 	s.setupRouter()
 	return s, nil
@@ -95,7 +100,7 @@ func (s *Server) setupRouter() {
 	s.router = gin.New()
 	s.router.Use(middleware.Recovery())
 	s.router.Use(middleware.Logger())
-	s.router.Use(middleware.TraceMiddleware(middleware.NewW3CTraceProvider()))
+	s.router.Use(middleware.TraceMiddleware(middleware.NewW3CTraceProvider(), s.spanExporter))
 	s.router.Use(middleware.RequestID())
 	s.router.Use(middleware.CORS(middleware.CORSConfig{
 		AllowedOrigins: s.config.CORSAllowedOrigins,
@@ -148,6 +153,9 @@ func (s *Server) Run() error {
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.registry.Stop()
+	if err := s.spanExporter.Shutdown(ctx); err != nil {
+		slog.Error("failed to shutdown span exporter", slog.String("error", err.Error()))
+	}
 	if s.redisClient != nil {
 		err := s.redisClient.Close()
 		if err != nil {

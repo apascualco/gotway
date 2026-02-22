@@ -22,6 +22,10 @@ type Config struct {
 	JWTInternalTTL    time.Duration `envconfig:"JWT_INTERNAL_TTL" default:"5m"`
 	JWTAllowedIssuers []string      `envconfig:"JWT_ALLOWED_ISSUERS" default:"auth-service"`
 
+	TraceExporter     string `envconfig:"TRACE_EXPORTER" default:"noop"`
+	TraceOTLPEndpoint string `envconfig:"TRACE_OTLP_ENDPOINT" default:""`
+	TraceServiceName  string `envconfig:"TRACE_SERVICE_NAME" default:"gotway"`
+
 	RedisURL           string `envconfig:"REDIS_URL" default:""`
 	RateLimitEnabled   bool   `envconfig:"RATE_LIMIT_ENABLED" default:"false"`
 	RateLimitGlobalRPM int    `envconfig:"RATE_LIMIT_GLOBAL_RPM" default:"10000"`

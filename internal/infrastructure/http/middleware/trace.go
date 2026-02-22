@@ -1,9 +1,13 @@
 package middleware
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"time"
 
+	"github.com/apascualco/gotway/internal/infrastructure/tracing"
 	"github.com/gin-gonic/gin"
 )
 
@@ -20,8 +24,10 @@ type TraceProvider interface {
 	Inject(c *gin.Context, tc *TraceContext)
 }
 
-func TraceMiddleware(provider TraceProvider) gin.HandlerFunc {
+func TraceMiddleware(provider TraceProvider, exporter tracing.SpanExporter) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		start := time.Now()
+
 		tc := provider.Extract(c)
 
 		if tc.TraceID == "" {
@@ -45,6 +51,24 @@ func TraceMiddleware(provider TraceProvider) gin.HandlerFunc {
 		provider.Inject(c, tc)
 
 		c.Next()
+
+		exporter.Export(context.Background(), tracing.SpanData{
+			TraceID:      tc.TraceID,
+			SpanID:       tc.SpanID,
+			ParentSpanID: tc.ParentID,
+			Name:         fmt.Sprintf("%s %s", c.Request.Method, c.FullPath()),
+			Kind:         tracing.SpanKindServer,
+			StartTime:    start,
+			EndTime:      time.Now(),
+			StatusCode:   c.Writer.Status(),
+			Attributes: map[string]string{
+				"http.method":      c.Request.Method,
+				"http.url":         c.Request.URL.String(),
+				"http.status_code": fmt.Sprintf("%d", c.Writer.Status()),
+				"http.route":       c.FullPath(),
+				"net.peer.ip":      c.ClientIP(),
+			},
+		})
 	}
 }
 

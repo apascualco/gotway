@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/apascualco/gotway/internal/infrastructure/tracing"
 	"github.com/gin-gonic/gin"
 )
 
@@ -18,7 +19,7 @@ var validTraceparent = regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f
 
 func TestTraceContext_NoTraceparent_GeneratesNew(t *testing.T) {
 	router := gin.New()
-	router.Use(TraceMiddleware(NewW3CTraceProvider()))
+	router.Use(TraceMiddleware(NewW3CTraceProvider(), &tracing.NoopExporter{}))
 	router.GET("/test", func(c *gin.Context) {
 		traceID, _ := c.Get("trace_id")
 		spanID, _ := c.Get("span_id")
@@ -52,7 +53,7 @@ func TestTraceContext_ValidTraceparent_PreservesTraceID(t *testing.T) {
 	incoming := "00-" + originalTraceID + "-" + originalSpanID + "-01"
 
 	router := gin.New()
-	router.Use(TraceMiddleware(NewW3CTraceProvider()))
+	router.Use(TraceMiddleware(NewW3CTraceProvider(), &tracing.NoopExporter{}))
 	router.GET("/test", func(c *gin.Context) {
 		traceID, _ := c.Get("trace_id")
 		spanID, _ := c.Get("span_id")
@@ -103,7 +104,7 @@ func TestTraceContext_InvalidTraceparent_GeneratesNew(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			router := gin.New()
-			router.Use(TraceMiddleware(NewW3CTraceProvider()))
+			router.Use(TraceMiddleware(NewW3CTraceProvider(), &tracing.NoopExporter{}))
 			router.GET("/test", func(c *gin.Context) {
 				traceID, _ := c.Get("trace_id")
 				if traceID == "" {
@@ -131,7 +132,7 @@ func TestTraceContext_AllZerosTraceID_GeneratesNew(t *testing.T) {
 	zeroTrace := "00-00000000000000000000000000000000-1234567890abcdef-01"
 
 	router := gin.New()
-	router.Use(TraceMiddleware(NewW3CTraceProvider()))
+	router.Use(TraceMiddleware(NewW3CTraceProvider(), &tracing.NoopExporter{}))
 	router.GET("/test", func(c *gin.Context) {
 		traceID, _ := c.Get("trace_id")
 		if traceID == strings.Repeat("0", 32) {
@@ -159,7 +160,7 @@ func TestTraceContext_TracestateIsPropagated(t *testing.T) {
 	tracestate := "vendor1=value1,vendor2=value2"
 
 	router := gin.New()
-	router.Use(TraceMiddleware(NewW3CTraceProvider()))
+	router.Use(TraceMiddleware(NewW3CTraceProvider(), &tracing.NoopExporter{}))
 	router.GET("/test", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
@@ -180,7 +181,7 @@ func TestTraceContext_AllZerosSpanID_GeneratesNew(t *testing.T) {
 	zeroSpan := "00-abcdef1234567890abcdef1234567890-0000000000000000-01"
 
 	router := gin.New()
-	router.Use(TraceMiddleware(NewW3CTraceProvider()))
+	router.Use(TraceMiddleware(NewW3CTraceProvider(), &tracing.NoopExporter{}))
 	router.GET("/test", func(c *gin.Context) {
 		traceID, _ := c.Get("trace_id")
 		if traceID == "" {
